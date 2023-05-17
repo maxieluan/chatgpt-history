@@ -1,0 +1,3 @@
+{
+    "files": ["main.qml","main.py","config.ini","crytpo.py","db.py","db.sqlite"]
+}
