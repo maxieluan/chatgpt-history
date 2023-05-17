@@ -11,7 +11,7 @@ You don't want anyone to access your chatgpt history, after all, there are sensi
 - [x] Importing
 - [x] Deleting,
 - [x] Grouping.
-- [x] ** encryption** sorta
+- [x] __encryption__ sorta
 
 ## Todo
 - [ ] Nicer UI
