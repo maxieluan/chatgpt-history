@@ -12,16 +12,16 @@ You don't want anyone to access your chatgpt history, after all, there are sensi
 - [x] Deleting,
 - [x] Grouping.
 - [x] __encryption__ sorta
+- [x] A place to enter your password.
+- [x] Filtering
+- [x] tags
 
 ## Todo
 - [ ] Nicer UI
 - [ ] Even Nicer UX
-- [ ] A place to enter your password.
 - [ ] Better code structure.
-- [ ] Filtering
 - [ ] Rename
 - [ ] Abstract
-- [ ] tags
 
 ## Limitation.
 It's encrypted, so, can't do global full text search. 
