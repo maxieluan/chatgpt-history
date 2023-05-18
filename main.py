@@ -180,6 +180,8 @@ def show_delete_dialog():
         conversations = Conversation.get_by_group_id(group.id, cursor)
         data[f"{group.id}-{group.name}"] = [{"title": conversation.title, "id": conversation.id} for conversation in conversations]
     window.tree_model.update_data(data)
+    window.refresh_tag_lists()
+    window.refresh_tags()
 
 def create_tree_view(parent):
     tree_view = QTreeView(parent)
