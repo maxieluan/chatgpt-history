@@ -1,13 +1,15 @@
+from typing import Any, Union
 from markdown_it import MarkdownIt
 import pygments
 from pygments.formatters import HtmlFormatter
 import configparser
 import os.path
-from crytpo import EncryptionWrapper
-from db import Database, Conversation, Tag, Group, Action
-from PySide6.QtCore import Qt
+import sys, ctypes
+from crytpo import EncryptionWrapper, SecureString
+from db import Database, Conversation, Tag, Group, Action, Metadata
+from PySide6.QtCore import Qt, QSortFilterProxyModel,QModelIndex, QPersistentModelIndex
 from PySide6.QtGui import QStandardItem, QStandardItemModel, QAction
-from PySide6.QtWidgets import QApplication, QSplitter, QTreeView, QTextEdit, QMainWindow, QToolBar, QWidget, QVBoxLayout, QFileDialog, QDialog, QDialogButtonBox, QButtonGroup, QRadioButton, QScrollArea, QTabWidget, QPushButton, QHBoxLayout, QListWidget, QListWidgetItem, QLineEdit
+from PySide6.QtWidgets import QApplication, QSplitter, QTreeView, QTextEdit, QMainWindow, QToolBar, QWidget, QVBoxLayout, QFileDialog, QDialog, QDialogButtonBox, QButtonGroup, QRadioButton, QScrollArea, QTabWidget, QPushButton, QHBoxLayout, QListWidget, QListWidgetItem, QLineEdit, QMessageBox, QToolButton, QMenu, QCheckBox
 
 
 class TreeModel(QStandardItemModel):
@@ -19,6 +21,10 @@ class TreeModel(QStandardItemModel):
     def update_data(self, data):
         parent_item = self.invisibleRootItem()
         # remove everything
+        database = Database()
+        cursor = database.get_cursor()
+        tags_by_c = Tag.get_all_tags_grouped_by_conversation(cursor)
+
         parent_item.removeRows(0, parent_item.rowCount())
         for group_name, group_items in data.items():
             # split group_name into id and name
@@ -33,9 +39,28 @@ class TreeModel(QStandardItemModel):
                 child_item = QStandardItem(item_name["title"])
                 child_item.setData(item_name["id"], Qt.UserRole)
                 child_item.setData("con", Qt.UserRole + 1)
+                if item_name["id"] in tags_by_c:
+                    child_item.setData(tags_by_c[item_name["id"]], Qt.UserRole + 2)
                 group_item.appendRow(child_item)
     
+    def tag_changed(self, conversation):
+        # loop through tree items for group with id == conversation.group_id
+        for i in range(self.rowCount()):
+            group_item = self.item(i)
+            if int(group_item.data(Qt.UserRole)) == conversation.group_id:
+                # loop through conversations
+                for j in range(group_item.rowCount()):
+                    conversation_item = group_item.child(j)
+                    if conversation_item.data(Qt.UserRole) == conversation.id:
+                        tags = Tag.get_by_conversation_id(conversation.id, cursor)
+                        conversation_item.setData(tags, Qt.UserRole + 2)
+                        break
+                break
+
     def conversation_added(self, conversation):
+        database = Database()
+        cursor = database.get_cursor()
+        tags = Tag.get_by_conversation_id(conversation.id, cursor)
         # loop through tree items for group with id == conversation.group_id
         for i in range(self.rowCount()):
             group_item = self.item(i)
@@ -44,9 +69,9 @@ class TreeModel(QStandardItemModel):
                 child_item = QStandardItem(conversation.title)
                 child_item.setData(conversation.id, Qt.UserRole)
                 child_item.setData("con", Qt.UserRole + 1)
+                child_item.setData(tags, Qt.UserRole + 2)
                 group_item.appendRow(child_item)
                 break
-                
 
     def group_added(self, group):
         # add the group to the tree
@@ -54,16 +79,68 @@ class TreeModel(QStandardItemModel):
         group_item.setData(group.id, Qt.UserRole)
         self.appendRow(group_item)
 
+class FilterProxyModel(QSortFilterProxyModel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFilterCaseSensitivity(Qt.CaseInsensitive)
+        self.setFilterKeyColumn(0)
+        self.filter = ""
+        self.tag_id = None
+
+    def data(self, index, role=Qt.DisplayRole):
+        if role == Qt.DisplayRole:
+            return super().data(index, Qt.DisplayRole)
+        
+        if role == Qt.UserRole or role == Qt.UserRole + 1:
+            source_index = self.mapToSource(index)
+
+            print(source_index)
+            return self.sourceModel().data(source_index, role)
+
+        return super().data(index, role)
+    
+    def setFilter(self, filter: str) -> None:
+        self.filter = filter
+        self.invalidateFilter()
+    
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex | QPersistentModelIndex) -> bool:
+
+
+        source_model = self.sourceModel()
+        source_index = source_model.index(source_row, 0, source_parent)
+        item_text = source_model.data(source_index, Qt.DisplayRole)
+
+        if self.tag_id != None:
+            if source_model.data(source_index, Qt.UserRole + 1) == "con":
+                tags = source_model.data(source_index, Qt.UserRole + 2)
+                if self.tag_id not in tags:
+                    return False
+        
+        if not self.filter:
+            return True
+
+        if self.filter.lower() in item_text.lower():
+            return True
+
+        # Check nested rows (conversations)
+        if source_model.hasChildren(source_index):
+            for row in range(source_model.rowCount(source_index)):
+                if self.filterAcceptsRow(row, source_index):
+                    return True
+
+        return False
+
 def handle_item_clicked(index):
-    tree_model = index.model()
-    item = tree_model.itemFromIndex(index)
-    if item.data(Qt.UserRole + 1) == "con":
-        conversation_id = item.data(Qt.UserRole)
+    tree_model = window.proxy_model
+    item_type = tree_model.data(index, Qt.UserRole + 1)
+    item_id = tree_model.data(index, Qt.UserRole)
+    print(item_type, item_id)
+    if item_type == "con":
+        conversation_id = item_id
         database = Database()
         cursor = database.get_cursor()
         conversation = Conversation.get_by_id(conversation_id, cursor)
-        password = "password"
-        encryption_wrapper = EncryptionWrapper(password, conversation.salt)
+        encryption_wrapper = EncryptionWrapper(str(secure_key), conversation.salt)
         decrypted_content = encryption_wrapper.decrypt(
             conversation.data)
 
@@ -73,10 +150,10 @@ def handle_item_clicked(index):
             '<div class="code-container">' \
             '<pre class="highlight"><code>' + pygments.highlight(tokens[idx]['content'], md.lexer, formatter) + '</code></pre><button class="copy-button" onclick="copyCode(this)">Copy</button></div>'
 
+        window.update_active_conversation(conversation)
         html = md.render(decrypted_content)
         window.text_edit.setHtml(html)
-        with open("output.html", "w", encoding="utf-8") as f:
-            f.write(html)
+        
 
 def create_toolbar(parent):
     toolbar = QToolBar(parent)
@@ -114,6 +191,139 @@ def create_text_edit(parent):
     text_edit = QTextEdit(parent)
     text_edit.setMinimumWidth(400)
     return text_edit
+
+
+class ManageTagsDialog(QDialog):
+    def __init__(self):
+        super().__init__()
+
+        self.setWindowTitle("Manage Tags")
+        self.setMinimumSize(300, 200)
+        
+        self.layout = QVBoxLayout()
+        self.top_widget = QWidget()
+        self.top_widget_layout = QHBoxLayout(self.top_widget)
+        self.layout.addWidget(self.top_widget)
+
+        ## two columns
+        ## left column: list of tags
+        ## right column: add, delete, edit buttons
+        self.setLayout(self.layout)
+
+        self.left_column = QWidget()
+        self.left_column_layout = QVBoxLayout(self.left_column)
+        self.left_column_layout.setContentsMargins(0, 0, 0, 0)
+        self.left_column_layout.setSpacing(0)
+        self.left_column.setStyleSheet("background-color: white;")
+        self.top_widget_layout.addWidget(self.left_column)
+
+        self.right_column = QWidget()
+        self.right_column_layout = QVBoxLayout(self.right_column)
+        self.right_column_layout.setContentsMargins(0, 0, 0, 0)
+        self.right_column_layout.setSpacing(0)
+        self.right_column.setStyleSheet("background-color: white;")
+        self.top_widget_layout.addWidget(self.right_column)
+        
+        self.tag_list = QListWidget()
+        self.tag_list.setSelectionMode(QListWidget.MultiSelection)
+
+        database = Database()
+        cursor = database.get_cursor()
+        tags = Tag.get_all(cursor)
+        for tag in tags:
+            item = QListWidgetItem(tag.name)
+            item.setData(Qt.UserRole, tag.id)
+            self.tag_list.addItem(item)
+
+        self.left_column_layout.addWidget(self.tag_list)
+
+        self.button_add = QPushButton("Add")
+        self.button_add.clicked.connect(self.add_tag)
+        self.right_column_layout.addWidget(self.button_add)
+
+        self.button_delete = QPushButton("Delete")
+        self.button_delete.clicked.connect(self.delete_tag)
+        self.right_column_layout.addWidget(self.button_delete)
+
+        self.button_edit = QPushButton("Edit")
+        self.button_edit.clicked.connect(self.edit_tag)
+        self.right_column_layout.addWidget(self.button_edit)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        self.layout.addWidget(button_box)
+
+    def add_tag(self):
+        dialog = AddTagDialog()
+        if dialog.tag != None:
+            database = Database()
+            cursor = database.get_cursor()
+            tag = Tag(None, dialog.tag)
+            tag_id = Tag.add(tag, cursor)
+            tag.id = tag_id
+            database.conn.commit()
+
+            item = QListWidgetItem(tag.name)
+            item.setData(Qt.UserRole, tag.id)
+            self.tag_list.addItem(item)
+    
+    def delete_tag(self):
+        for item in self.tag_list.selectedItems():
+            tag_id = item.data(Qt.UserRole)
+            database = Database()
+            cursor = database.get_cursor()
+
+            conversations = Conversation.get_by_tag_id(tag_id, cursor)
+            for conversation in conversations:
+                Conversation.remove_tag(conversation.id, tag_id, cursor)
+
+            Tag.delete(tag_id, cursor)
+            database.conn.commit()
+            self.tag_list.takeItem(self.tag_list.row(item))
+
+    def edit_tag(self):
+        if len(self.tag_list.selectedItems()) == 0:
+            return
+        item = self.tag_list.selectedItems()[0]
+        tag_id = item.data(Qt.UserRole)
+        database = Database()
+        cursor = database.get_cursor()
+        tag = Tag.get_by_id(tag_id, cursor)
+        dialog = AddTagDialog(False)
+        if dialog.tag != None:
+            tag.name = dialog.tag
+            Tag.update(tag, cursor)
+            database.conn.commit()
+            item.setText(tag.name)
+
+class AddTagDialog(QDialog):
+    def __init__(self, add=True):
+        super().__init__()
+        if add:
+            self.setWindowTitle("Add Tag")
+        else:
+            self.setWindowTitle("Edit Tag")
+        self.setMinimumSize(300, 200)
+        self.layout = QVBoxLayout()
+        self.setLayout(self.layout)
+
+        self.tag_name_input = QLineEdit()
+        self.tag_name_input.setPlaceholderText("Tag Name")
+        self.layout.addWidget(self.tag_name_input)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        self.layout.addWidget(button_box)
+
+        if self.exec() == QDialog.Accepted:
+            self.tag = self.tag_name_input.text()
+        else :
+            self.tag = None
+
+    def deleteLater(self) -> None:
+        return super().deleteLater()
 
 class BatchDeleteDialog(QDialog):
     def __init__(self):
@@ -334,6 +544,7 @@ class AddGroupDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self, header_labels, data):
         super().__init__()
+        self.active_conversation = None
 
         # Create the widgets
         self.tree_view = create_tree_view(self)
@@ -344,30 +555,67 @@ class MainWindow(QMainWindow):
         self.leftcolumn = QVBoxLayout(self.left_widget)
         self.leftcolumn.setContentsMargins(0, 0, 0, 0)
 
+        self.right_widget = QWidget()
+        self.rightcolumn = QVBoxLayout(self.right_widget)
+        self.rightcolumn.setSpacing(0)
+        self.rightcolumn.setContentsMargins(0, 0, 0, 0)
+
         filter_input = QLineEdit()
         filter_input.setPlaceholderText("Filter")
+
         self.leftcolumn.addWidget(filter_input)
+
+        ## list of tags
+        self.tag_list = QListWidget()
+        self.tag_list.setSelectionMode(QListWidget.SingleSelection)
+        self.tag_list.setMaximumHeight(100)
+        self.leftcolumn.addWidget(self.tag_list)
+        self.tag_list.itemSelectionChanged.connect(self.tag_selected)
+        self.refresh_tag_lists()
 
         toolbar = QToolBar()
         toolbar.setMinimumHeight(30)
         add_group_action = QAction("Add Group", self)
         add_group_action.triggered.connect(self.add_group)
+        
+        clear_tag_selection_action = QAction("Clear Tag", self)
+        clear_tag_selection_action.triggered.connect(self.clear_tag_selection)
+
+        toggle_expand_action = QAction("Expand", self)
+        toggle_expand_action.triggered.connect(self.tree_view.expandAll)
+
+        toggle_collapse_action = QAction("Collapse", self)
+        toggle_collapse_action.triggered.connect(self.tree_view.collapseAll)
+
         toolbar.addAction(add_group_action)
+        toolbar.addAction(clear_tag_selection_action)
+        toolbar.addAction(toggle_expand_action)
+        toolbar.addAction(toggle_collapse_action)
         self.leftcolumn.addWidget(toolbar)
         
         self.leftcolumn.addWidget(self.tree_view)
         # Create a splitter to handle resizing
+        self.rightcolumn.addWidget(self.text_edit)
+        
+        toolbar_under_textedit = self.create_toolbar_under_text_edit()
+
+        self.rightcolumn.addWidget(toolbar_under_textedit)
+
         splitter = QSplitter(Qt.Horizontal, self)
         splitter.addWidget(self.left_widget)
-        splitter.addWidget(self.text_edit)
+        splitter.addWidget(self.right_widget)
         splitter.setChildrenCollapsible(False)
 
         # Set up the tree model
         self.tree_model = TreeModel(header_labels, data)
+        self.proxy_model = FilterProxyModel()
+        self.proxy_model.setSourceModel(self.tree_model)
 
         # Set the model on the tree view
-        self.tree_view.setModel(self.tree_model)
+        self.tree_view.setModel(self.proxy_model)
         self.tree_view.clicked.connect(handle_item_clicked)
+
+        filter_input.textChanged.connect(self.proxy_model.setFilter)
 
         # Set up the layout for the toolbar and splitter
         layout = QVBoxLayout()
@@ -383,6 +631,134 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Tree View Demo")
         self.setGeometry(100, 100, 640, 480)
         self.setMinimumSize(600, 400)
+
+    def update_active_conversation(self, conversation):
+        self.active_conversation = conversation
+        window.refresh_tags()
+
+    def clear_tag_selection(self):
+        self.tag_list.clearSelection()
+        self.proxy_model.tag_id = None
+        self.proxy_model.invalidateFilter()
+
+    def create_toolbar_under_text_edit(self):
+        self.toolbar_textedit = QToolBar(self)
+        self.toolbar_textedit.setMinimumHeight(10)
+        self.toolbar_textedit.setStyleSheet("background-color: white; border: 1px solid black; border-top: 0px")
+        button = QToolButton()
+        button.setText("Tags  ")
+        self.toolbar_textedit.addWidget(button)
+
+        # Create the menu
+        self.menu = QMenu(button)
+        self.menu.setStyleSheet(
+                """
+                QMenu {
+                    background-color: white;
+                    color: black;
+                }
+                QMenu::item:selected {
+                    background-color: lightgray;
+                    color: black;
+                }
+                """
+            )
+
+        self.refresh_tags()
+
+        # Set the menu on the tool button
+        button.setMenu(self.menu)
+        button.setPopupMode(QToolButton.MenuButtonPopup)
+
+        button_manage_tags = QToolButton()
+        button_manage_tags.setText("Manage Tags")
+        button_manage_tags.clicked.connect(self.show_manage_tags_dialog)
+        self.toolbar_textedit.addWidget(button_manage_tags)
+
+        return self.toolbar_textedit
+    
+        
+    def show_manage_tags_dialog(self):
+        dialog = ManageTagsDialog()
+        dialog.exec()
+        self.refresh_tags()
+        self.refresh_tag_lists()
+
+    def refresh_tag_lists(self):
+        self.tag_list.clear()
+        database = Database()
+        cursor = database.get_cursor()
+        tags = Tag.get_all(cursor)
+        for tag in tags:
+            item = QListWidgetItem(tag.name + "(" + str(tag.count) + ")")
+            item.setData(Qt.UserRole, tag.id)
+            self.tag_list.addItem(item)
+
+    def tag_selected(self):
+        if len(self.tag_list.selectedItems()) == 0:
+            self.proxy_model.tag_id = None
+            self.proxy_model.invalidateFilter()
+            return
+        print(self.tag_list.selectedItems())
+        item = self.tag_list.selectedItems()[0]
+        tag_id = item.data(Qt.UserRole)
+        self.proxy_model.tag_id = tag_id
+        self.proxy_model.invalidateFilter()
+        
+    
+    def refresh_tags(self):
+        menu = self.menu
+        menu.clear()
+        database = Database()
+        cursor = database.get_cursor()
+        tags = Tag.get_all(cursor)    
+
+        print(self.active_conversation)
+        
+        if self.active_conversation != None:
+            tags_of_conversation = Tag.get_by_conversation_id(self.active_conversation.id, cursor)
+
+        for tag in tags:
+            action = menu.addAction(tag.name)
+            action.setData(tag.id)
+
+            if self.active_conversation != None:
+                action.setCheckable(True)
+            else:
+                action.setCheckable(False)
+
+            if self.active_conversation != None:
+                for tag_of_conversation in tags_of_conversation:
+                    if tag_of_conversation.id == tag.id:
+                        action.setChecked(True)
+                        break
+            
+            action.triggered.connect(lambda checked = None, action = action: self.handle_tag_selected(action))
+            menu.addAction(action)
+        
+        print(menu.actions())
+    
+    def handle_tag_selected(self, action):
+        if self.active_conversation == None:
+            return
+
+        print(action)
+        tag_id = action.data()
+        if action.isChecked():
+            database = Database()
+            cursor = database.get_cursor()
+            
+            Conversation.add_tag(self.active_conversation.id, tag_id, cursor)
+            database.conn.commit()
+
+        else:
+            database = Database()
+            cursor = database.get_cursor()
+            
+            Conversation.remove_tag(self.active_conversation.id, tag_id, cursor)
+            database.conn.commit()
+        self.tree_model.tag_changed(self.active_conversation)
+        self.refresh_tag_lists()
 
     def add_group(self):
         dialog = AddGroupDialog()
@@ -421,8 +797,7 @@ class MainWindow(QMainWindow):
                     group_id = group_dialog.selected_group_id 
 
                     salt = EncryptionWrapper.generate_salt()
-                    password = "password"
-                    encryption_wrapper = EncryptionWrapper(password, salt)
+                    encryption_wrapper = EncryptionWrapper(str(secure_key), salt)
                     encrypted_content = encryption_wrapper.encrypt(
                         remaining_content)
                     database = Database()
@@ -437,7 +812,7 @@ class MainWindow(QMainWindow):
                     retrieved_conversation = Conversation.get_by_id(
                         conversation_id, cursor)
                     new_encryption_wrapper = EncryptionWrapper(
-                        password, retrieved_conversation.salt)
+                        str(secure_key), retrieved_conversation.salt)
                     decrypted_content = new_encryption_wrapper.decrypt(
                         retrieved_conversation.data)
 
@@ -447,12 +822,81 @@ class MainWindow(QMainWindow):
                     md.renderer.rules['code'] = lambda tokens, idx, options, env, slf: \
                         '<div class="code-container">' \
                         '<pre class="highlight"><code>' + pygments.highlight(tokens[idx]['content'], md.lexer, formatter) + '</code></pre><button class="copy-button" onclick="copyCode(this)">Copy</button></div>'
+                    
+                    window.update_active_conversation(retrieved_conversation)
 
                     html = md.render(decrypted_content)
                     self.text_edit.setHtml(html)                   
 
+class PasswordDialog(QDialog):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Create a password.")
+        self.setMinimumSize(300, 200)
+        self.layout = QVBoxLayout()
+        self.setLayout(self.layout)
+
+        self.password_input = QLineEdit()
+        self.password_input.setPlaceholderText("Password")
+        self.password_input.setEchoMode(QLineEdit.Password)
+        self.layout.addWidget(self.password_input)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        self.layout.addWidget(button_box)
+
+        if self.exec() == QDialog.Accepted:
+            self.password = self.password_input.text()
+        else :
+            self.password = None
+
+class InputPasswordDialog(QDialog):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Input password.")
+        self.setMinimumSize(300, 200)
+        self.layout = QVBoxLayout()
+        self.setLayout(self.layout)
+
+        self.password_input = QLineEdit()
+        self.password_input.setPlaceholderText("Password")
+        self.password_input.setEchoMode(QLineEdit.Password)
+        self.layout.addWidget(self.password_input)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        self.layout.addWidget(button_box)
+
+        if self.exec() == QDialog.Accepted:
+            self.password = self.password_input.text()
+        else :
+            self.password = None
+
+def check_c_libraries():
+    if sys.platform == 'win32':
+        libc = 'msvcrt'
+    elif sys.platform == 'darwin':
+        libc = 'libSystem.dylib'
+    else:
+        libc = 'libc.so.6'
+
+    try:
+        ctypes.cdll.LoadLibrary(libc)
+    except OSError:
+        message_box = QMessageBox()
+        message_box.setText(f"Could not load {libc}.")
+        message_box.exec()
+        sys.exit(1)
 
 if __name__ == "__main__":
+    secure_key = None
+
+    app = QApplication([])
+
+    check_c_libraries()
+
     config_file = "config.ini"
 
     if not os.path.exists(config_file):
@@ -466,12 +910,50 @@ if __name__ == "__main__":
 
     # Check if the app has been initialized
     if config["app"]["initialized"] == "False":
+        # backup db.sqlite
+        if os.path.exists("db.sqlite"):
+            os.rename("db.sqlite", "db.sqlite.bak")
+
         database = Database("db.sqlite")
         database.initialize()
+
+        create_password_dialog = PasswordDialog()
+        if create_password_dialog.password != None:
+            password = create_password_dialog.password
+            salt = EncryptionWrapper.generate_salt()
+            key = EncryptionWrapper.generate_strong_key()
+            encryption_wrapper = EncryptionWrapper(password, salt)
+            encrypted_key = encryption_wrapper.encrypt(key)
+            database = Database()
+            cursor = database.get_cursor()
+            blob = Metadata(None, "blob", encrypted_key)
+            Metadata.add(blob, cursor)
+            salt = Metadata(None, "salt", salt)
+            Metadata.add(salt, cursor)
+            database.conn.commit()
 
         config["app"]["initialized"] = "True"
         with open(config_file, "w") as f:
             config.write(f)
+    
+    input_password_dialog = InputPasswordDialog()
+    if input_password_dialog.password != None:
+        password = input_password_dialog.password
+        database = Database()
+        cursor = database.get_cursor()
+        encrypted_key = Metadata.get_by_key("blob", cursor).value
+        salt = Metadata.get_by_key("salt", cursor).value
+        encryption_wrapper = EncryptionWrapper(password, salt)
+        try:
+            secure_key = SecureString(encryption_wrapper.decrypt(encrypted_key))
+        except:
+            message_box = QMessageBox()
+            message_box.setText("Incorrect password.")
+            message_box.exec()
+            sys.exit(0)
+    else:
+        sys.exit(0)
+
     
     database = Database("db.sqlite")
     cursor = database.get_cursor()
@@ -483,8 +965,7 @@ if __name__ == "__main__":
         conversations = Conversation.get_by_group_id(group.id, cursor)
         data[f"{group.id}-{group.name}"] = [{"title": conversation.title, "id": conversation.id} for conversation in conversations]
 
-    header_labels = ["Groups"]
-    app = QApplication([])
+    header_labels = [""]
     window = MainWindow(header_labels, data)
     window.show()
     app.exec()

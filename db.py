@@ -18,6 +18,13 @@ class Database:
         self.cursor = self.conn.cursor()
 
     def create_table(self):
+        self.cursor.execute("""CREATE TABLE IF NOT EXISTS metadata (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                key TEXT NOT NULL UNIQUE,
+                                value TEXT NOT NULL,
+                                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP) """)
+
         self.cursor.execute("""CREATE TABLE IF NOT EXISTS conversations (
                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                                 title TEXT NOT NULL,
@@ -74,15 +81,32 @@ class Database:
     def close(self):
         self.conn.close()
 
+class Metadata:
+    def __init__(self, id, key, value):
+        self.id = id
+        self.key = key
+        self.value = value
+    
+    @classmethod
+    def get_by_key(cls, key, cursor):
+        cursor.execute("SELECT id, key, value FROM metadata WHERE key=?", (key,))
+        row = cursor.fetchone()
+        return cls(*row)
+    
+    @classmethod
+    def add(cls, metadata, cursor):
+        # add if key doesn't exist. update if key exists
+        cursor.execute("INSERT INTO metadata (key, value, created_at, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=?, updated_at=CURRENT_TIMESTAMP", (metadata.key, metadata.value, metadata.value))
+
 class Conversation:
-    def __init__(self, id, title, group_id, data, abstract, salt):
+    def __init__(self, id, title, group_id, data, abstract, salt, tags = []):
         self.title = title
         self.group_id = group_id
         self.data = data
         self.abstract = abstract
         self.id = id
         self.salt = salt
-        self.tags = []
+        self.tags = tags
     
     def __str__(self):
         return f"Conversation {self.id}: {self.title}"
@@ -110,7 +134,7 @@ class Conversation:
     
     @classmethod
     def get_by_group_id(cls, group_id, cursor):
-        cursor.execute("SELECT id, title, group_id, data, abstract, salt FROM conversations WHERE group_id=? AND deleted=0", (group_id,))
+        cursor.execute("SELECT id, title, group_id, '', abstract, salt FROM conversations WHERE group_id=? AND deleted=0", (group_id,))
         rows = cursor.fetchall()
         return [cls(*row) for row in rows]
     
@@ -195,16 +219,28 @@ class Group:
         return cls(*row)
     
 class Tag:
-    def __init__(self, id, name):
+    def __init__(self, id, name, count = 0):
         self.id = id
         self.name = name
+        self.count = count
     
     def __str__(self):
         return f"Tag {self.id}: {self.name}"
     
     @classmethod
+    def get_all_tags_grouped_by_conversation(cls, cursor):
+        cursor.execute("SELECT t.id, c.id FROM tag t INNER JOIN conversation_tag ct ON t.id=ct.tag_id INNER JOIN conversations c ON ct.conversation_id=c.id WHERE c.deleted=0")
+        data = {}
+        rows = cursor.fetchall()
+        for row in rows:
+            if row[1] not in data:
+                data[row[1]] = []
+            data[row[1]].append(row[0])
+        return data
+    
+    @classmethod
     def get_all(cls, cursor):
-        cursor.execute("SELECT id, name FROM tag")
+        cursor.execute("SELECT t.id, t.name, COUNT(ct.tag_id) FROM tag t LEFT JOIN conversation_tag ct ON t.id=ct.tag_id GROUP BY t.id")
         rows = cursor.fetchall()
         return [cls(*row) for row in rows]
     

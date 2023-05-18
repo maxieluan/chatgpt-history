@@ -33,9 +33,47 @@ class EncryptionWrapper:
 
     @classmethod
     def generate_salt(cls, length=16):
-        print(type(length))
 
         """Generate a random salt value."""
         charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_-+=<>?/"
         salt = ''.join(secrets.choice(charset) for _ in range(int(length)))
         return salt
+    
+    @classmethod
+    def generate_strong_key(cls, length=32):
+        """Generate a strong encryption key."""
+        charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_-+=<>?/"
+        key = ''.join(secrets.choice(charset) for _ in range(int(length)))
+        return key
+
+import ctypes
+import sys
+
+if sys.platform == 'win32':
+    libc = ctypes.cdll.msvcrt
+elif sys.platform == 'darwin':
+    libc = ctypes.cdll.LoadLibrary('libSystem.dylib')
+else:
+    libc = ctypes.cdll.LoadLibrary('libc.so.6')
+
+class SecureString:
+    def __init__(self, value):
+        self._buffer = ctypes.create_string_buffer(str(value).encode())
+        self._is_wiped = False
+
+    def __str__(self):
+        return str(self._buffer.value)
+
+    def wipe(self):
+        if not self._is_wiped:
+            libc.memset(self._buffer, 0, len(self._buffer))
+            self._is_wiped = True
+    
+## main
+if __name__ == '__main__':
+    password = SecureString('password')
+    print(str(password))
+
+    password.wipe()
+
+    print(str(password))
