@@ -35,6 +35,7 @@ You don't want anyone to access your chatgpt history, after all, there are sensi
 - [ ] Change Password
 - [ ] Change key
 - [ ] Export & import
+- [ ] Screen reader.
 
 ## Limitation.
 It's encrypted, so, can't do global full text search. 
