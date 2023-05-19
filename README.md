@@ -20,6 +20,7 @@ You don't want anyone to access your chatgpt history, after all, there are sensi
 - [x] Better code structure.
 - [x] Rename
 - [x] Edit mode.
+- [x] Can specify db location, can create, import or whatever.  
 
 ## Todo
 - [ ] Abstract
