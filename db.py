@@ -3,12 +3,19 @@ import sqlite3
 class Database:
     _instance = None
 
-    def __new__(cls, db="db.sqlite"):
-        if cls._instance is None:
-            cls._instance = super(Database, cls).__new__(cls)
+    @classmethod
+    def get_instance(cls):
+        if not cls._instance:
+            raise Exception("Database not initialized")
         return cls._instance
+    
+    @classmethod
+    def initialize(cls, db_location):
+        if cls._instance:
+            raise Exception("Database already initialized")
+        cls._instance = cls(db_location)
 
-    def __init__(self, db="db.sqlite"):
+    def __init__(self, db):
         self.db = db
         self.conn = None
         self.cursor = None
@@ -64,7 +71,7 @@ class Database:
         
         self.conn.commit()
     
-    def initialize(self):
+    def init(self):
         self.create_db()
         self.create_table()
 

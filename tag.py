@@ -16,7 +16,7 @@ class AddTagsDialog(QDialog):
         self.layout.addWidget(self.filter_input)
         self.tag_list = QListWidget()
         self.tag_list.setSelectionMode(QListWidget.MultiSelection)
-        database = Database()
+        database = Database.get_instance()
         cursor = database.get_cursor()
         tags = Tag.get_all(cursor)
         acitve_tag_ids = [tag.id for tag in self.window.active_conversation.tags]
@@ -49,11 +49,12 @@ class AddTagsDialog(QDialog):
             tag = Tag(tag_id, tag_name)
             convesation.tags.append(tag)
             tag_ids.append(tag.id)
-        database = Database()
+        database = Database.get_instance()
         cursor = database.get_cursor()
         Conversation.change_tag(convesation.id, tag_ids, cursor)
         database.conn.commit()
         self.window.update_active_conversation(convesation)
+        self.window.tree_model.tag_changed(convesation)
         self.accept()
     
     def filter_tags(self):
@@ -103,7 +104,7 @@ class ManageTagsDialog(QDialog):
         self.tag_list = QListWidget()
         self.tag_list.setSelectionMode(QListWidget.MultiSelection)
 
-        database = Database()
+        database = Database.get_instance()
         cursor = database.get_cursor()
         tags = Tag.get_all(cursor)
         for tag in tags:
@@ -142,7 +143,7 @@ class ManageTagsDialog(QDialog):
     def add_tag(self):
         dialog = AddTagDialog()
         if dialog.tag != None:
-            database = Database()
+            database = Database.get_instance()
             cursor = database.get_cursor()
             tag = Tag(None, dialog.tag)
             tag_id = Tag.add(tag, cursor)
@@ -156,7 +157,7 @@ class ManageTagsDialog(QDialog):
     def delete_tag(self):
         for item in self.tag_list.selectedItems():
             tag_id = item.data(Qt.UserRole)
-            database = Database()
+            database = Database.get_instance()
             cursor = database.get_cursor()
 
             conversations = Conversation.get_by_tag_id(tag_id, cursor)
@@ -172,7 +173,7 @@ class ManageTagsDialog(QDialog):
             return
         item = self.tag_list.selectedItems()[0]
         tag_id = item.data(Qt.UserRole)
-        database = Database()
+        database = Database.get_instance()
         cursor = database.get_cursor()
         tag = Tag.get_by_id(tag_id, cursor)
         dialog = AddTagDialog(False)

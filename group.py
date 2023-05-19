@@ -20,7 +20,7 @@ class GroupSelectionDialog(QDialog):
 
         self.group_button_group = QButtonGroup()
 
-        database = Database()
+        database = Database.get_instance()
         cursor = database.get_cursor()
         groups = Group.get_all(cursor)
         for group in groups:
@@ -88,7 +88,7 @@ class ChangeGroupDialog(QDialog):
         self.group_list = QListWidget()
         self.layout.addWidget(self.group_list)
 
-        database = Database()
+        database = Database.get_instance()
         cursor = database.get_cursor()
         groups = Group.get_all(cursor)
         for group in groups:
@@ -122,7 +122,7 @@ class ChangeGroupDialog(QDialog):
         
         item = self.group_list.selectedItems()[0]
         group_id = item.data(Qt.UserRole)
-        database = Database()
+        database = Database.get_instance()
         cursor = database.get_cursor()
         Conversation.change_group(conversation.id, group_id, cursor)
         database.conn.commit()

@@ -81,3 +81,6 @@ CMakeLists.txt.user*
 # ini files
 *.ini
 
+# build and dist
+build/
+dist/

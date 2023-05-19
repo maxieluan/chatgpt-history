@@ -1,8 +1,9 @@
+from appdirs import user_data_dir
 from markdown_it import MarkdownIt
 import pygments
 from pygments.formatters import HtmlFormatter
 import configparser
-import os.path
+import os.path, glob
 import sys, ctypes
 from crytpo import EncryptionWrapper, SecureString
 from db import Database, Conversation, Tag, Group, Metadata
@@ -22,7 +23,7 @@ class TreeModel(QStandardItemModel):
     def update_data(self, data):
         parent_item = self.invisibleRootItem()
         # remove everything
-        database = Database()
+        database = Database.get_instance()
         cursor = database.get_cursor()
         tags_by_c = Tag.get_all_tags_grouped_by_conversation(cursor)
 
@@ -52,7 +53,7 @@ class TreeModel(QStandardItemModel):
                 for j in range(group_item.rowCount()):
                     conversation_item = group_item.child(j)
                     if conversation_item.data(Qt.UserRole) == conversation.id:
-                        conversation_item.setData(conversation.tags, Qt.UserRole + 2)
+                        conversation_item.setData([tag.id for tag in conversation.tags], Qt.UserRole + 2)
                         break
                 break
     
@@ -81,7 +82,7 @@ class TreeModel(QStandardItemModel):
         
 
     def conversation_added(self, conversation):
-        database = Database()
+        database = Database.get_instance()
         cursor = database.get_cursor()
         tags = Tag.get_by_conversation_id(conversation.id, cursor)
         # loop through tree items for group with id == conversation.group_id
@@ -125,8 +126,6 @@ class FilterProxyModel(QSortFilterProxyModel):
         self.invalidateFilter()
     
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex | QPersistentModelIndex) -> bool:
-
-
         source_model = self.sourceModel()
         source_index = source_model.index(source_row, 0, source_parent)
         item_text = source_model.data(source_index, Qt.DisplayRole)
@@ -153,12 +152,11 @@ class FilterProxyModel(QSortFilterProxyModel):
 
 def handle_item_clicked(index):
     tree_model = window.proxy_model
-    print("here")
     item_type = tree_model.data(index, Qt.UserRole + 1)
     item_id = tree_model.data(index, Qt.UserRole)
     if item_type == "con":
         conversation_id = item_id
-        database = Database()
+        database = Database.get_instance()
         cursor = database.get_cursor()
         conversation = Conversation.get_by_id(conversation_id, cursor)
         tags = Tag.get_by_conversation_id(conversation_id, cursor)
@@ -201,7 +199,7 @@ def show_delete_dialog():
     dialog = BatchDeleteDialog()
     dialog.exec()
     data = {}
-    database = Database()
+    database = Database.get_instance()
     cursor = database.get_cursor()
     groups = Group.get_all(cursor)
     for group in groups:
@@ -288,7 +286,7 @@ class BatchDeleteDialog(QDialog):
         self.group_list = QListWidget()
         self.group_list.setSelectionMode(QListWidget.MultiSelection)
 
-        database = Database()
+        database = Database.get_instance()
         cursor = database.get_cursor()
         groups = Group.get_all(cursor)
         for group in groups:
@@ -311,7 +309,7 @@ class BatchDeleteDialog(QDialog):
         self.conversation_list = QListWidget()
         self.conversation_list.setSelectionMode(QListWidget.MultiSelection)
 
-        database = Database()
+        database = Database.get_instance()
         cursor = database.get_cursor()
         conversations = Conversation.get_all(cursor)
         for conversation in conversations:
@@ -332,7 +330,7 @@ class BatchDeleteDialog(QDialog):
         self.tag_list = QListWidget()
         self.tag_list.setSelectionMode(QListWidget.MultiSelection)
 
-        database = Database()
+        database = Database.get_instance()
         cursor = database.get_cursor()
         tags = Tag.get_all(cursor)
         for tag in tags:
@@ -371,7 +369,7 @@ class BatchDeleteDialog(QDialog):
         if self.current_tab == "group":
             for item in self.group_list.selectedItems():
                 group_id = item.data(Qt.UserRole)
-                database = Database()
+                database = Database.get_instance()
                 cursor = database.get_cursor()
                 Group.delete(group_id, cursor)
                 database.conn.commit()
@@ -379,7 +377,7 @@ class BatchDeleteDialog(QDialog):
         elif self.current_tab == "conversation":
             for item in self.conversation_list.selectedItems():
                 conversation_id = item.data(Qt.UserRole)
-                database = Database()
+                database = Database.get_instance()
                 cursor = database.get_cursor()
                 
                 tags = Tag.get_by_conversation_id(conversation_id, cursor)
@@ -392,7 +390,7 @@ class BatchDeleteDialog(QDialog):
         elif self.current_tab == "tag":
             for item in self.tag_list.selectedItems():
                 tag_id = item.data(Qt.UserRole)
-                database = Database()
+                database = Database.get_instance()
                 cursor = database.get_cursor()
 
                 conversations = Conversation.get_by_tag_id(tag_id, cursor)
@@ -508,13 +506,13 @@ class MainWindow(QMainWindow):
             item_type = self.proxy_model.data(item, Qt.UserRole + 1)
             item_id = self.proxy_model.data(item, Qt.UserRole)
             if item_type == "con":
-                database = Database()
+                database = Database.get_instance()
                 cursor = database.get_cursor()
                 title = self.proxy_model.data(item, Qt.DisplayRole)
                 Conversation.update_title(item_id, title, cursor)
                 database.conn.commit()
             else:
-                database = Database()
+                database = Database.get_instance()
                 cursor = database.get_cursor()
                 title = self.proxy_model.data(item, Qt.DisplayRole)
                 group = Group(item_id, title)
@@ -523,7 +521,7 @@ class MainWindow(QMainWindow):
 
         
     def refresh_data(self):
-        database = Database()
+        database = Database.get_instance()
         cursor = database.get_cursor()
         data = {}
         groups = Group.get_all(cursor)
@@ -581,7 +579,7 @@ class MainWindow(QMainWindow):
     def save(self):
         if self.active_conversation == None:
             return
-        database = Database()
+        database = Database.get_instance()
         cursor = database.get_cursor()
         encryption_wrapper = EncryptionWrapper(str(secure_key), self.active_conversation.salt)
         encrypted_content = encryption_wrapper.encrypt(self.text_edit.toPlainText())
@@ -637,12 +635,11 @@ class MainWindow(QMainWindow):
     def show_manage_tags_dialog(self):
         dialog = ManageTagsDialog()
         dialog.exec()
-        self.refresh_tags()
         self.refresh_tag_lists()
 
     def refresh_tag_lists(self):
         self.tag_list.clear()
-        database = Database()
+        database = Database.get_instance()
         cursor = database.get_cursor()
         tags = Tag.get_all(cursor)
         for tag in tags:
@@ -663,18 +660,17 @@ class MainWindow(QMainWindow):
     def handle_tag_selected(self, action):
         if self.active_conversation == None:
             return
-
-        print(action)
+        
         tag_id = action.data()
         if action.isChecked():
-            database = Database()
+            database = Database.get_instance()
             cursor = database.get_cursor()
             
             Conversation.add_tag(self.active_conversation.id, tag_id, cursor)
             database.conn.commit()
 
         else:
-            database = Database()
+            database = Database.get_instance()
             cursor = database.get_cursor()
             
             Conversation.remove_tag(self.active_conversation.id, tag_id, cursor)
@@ -687,7 +683,7 @@ class MainWindow(QMainWindow):
     def add_group(self):
         dialog = AddGroupDialog()
         if dialog.group != None:
-            database = Database()
+            database = Database.get_instance()
             cursor = database.get_cursor()
             group = Group(None, dialog.group)
             group_id = Group.add(group, cursor)
@@ -724,7 +720,7 @@ class MainWindow(QMainWindow):
                     encryption_wrapper = EncryptionWrapper(str(secure_key), salt)
                     encrypted_content = encryption_wrapper.encrypt(
                         remaining_content)
-                    database = Database()
+                    database = Database.get_instance()
                     cursor = database.get_cursor()
                     conversation = Conversation(
                         None, title, group_id, encrypted_content, None, salt)
@@ -822,25 +818,42 @@ if __name__ == "__main__":
 
     check_c_libraries()
 
-    config_file = "config.ini"
+    if "--dev" in sys.argv:
+        # data_dir is current directory
+        data_dir = os.getcwd()
+    
+    else:
+        data_dir = user_data_dir(appname="chatgpt-history", appauthor="maxieluan")
+        os.makedirs(data_dir, exist_ok=True)
 
-    if not os.path.exists(config_file):
+    config_file = "config.ini"
+    config_path = os.path.join(data_dir, config_file)
+    if not os.path.exists(config_path):
         config = configparser.ConfigParser()
         config["app"] = {"initialized": "False"}
-        with open(config_file, "w") as f:
+        with open(config_path, "w") as f:
             config.write(f)
 
     config = configparser.ConfigParser()
-    config.read(config_file)
+    config.read(config_path)
 
+    db_path = os.path.join(data_dir, "db.sqlite")
     # Check if the app has been initialized
     if config["app"]["initialized"] == "False":
         # backup db.sqlite
-        if os.path.exists("db.sqlite"):
-            os.rename("db.sqlite", "db.sqlite.bak")
+        if os.path.exists(db_path):
+            # list db.sqlite.bak* count
+            bak_files = glob.glob(os.path.join(data_dir, "db.sqlite.bak*"))
+            bak_count = len(bak_files)
+            if bak_count == 0:
+                os.rename(db_path, os.path.join(data_dir, "db.sqlite.bak"))
+            else:
+                bak_count += 1
+                os.rename(db_path, os.path.join(data_dir,f"db.sqlite.bak{bak_count}"))
 
-        database = Database("db.sqlite")
-        database.initialize()
+        Database.initialize(db_path)
+        database = Database.get_instance()
+        database.init()
 
         create_password_dialog = PasswordDialog()
         if create_password_dialog.password != None:
@@ -849,22 +862,28 @@ if __name__ == "__main__":
             key = EncryptionWrapper.generate_strong_key()
             encryption_wrapper = EncryptionWrapper(password, salt)
             encrypted_key = encryption_wrapper.encrypt(key)
-            database = Database()
+            database = Database.get_instance()
             cursor = database.get_cursor()
             blob = Metadata(None, "blob", encrypted_key)
             Metadata.add(blob, cursor)
             salt = Metadata(None, "salt", salt)
             Metadata.add(salt, cursor)
             database.conn.commit()
+        else:
+            sys.exit(0)
 
         config["app"]["initialized"] = "True"
-        with open(config_file, "w") as f:
+        with open(config_path, "w") as f:
             config.write(f)
     
     input_password_dialog = InputPasswordDialog()
     if input_password_dialog.password != None:
         password = input_password_dialog.password
-        database = Database()
+        try :
+            Database.initialize(db_path)
+        except:
+            pass
+        database = Database.get_instance()
         cursor = database.get_cursor()
         encrypted_key = Metadata.get_by_key("blob", cursor).value
         salt = Metadata.get_by_key("salt", cursor).value
@@ -880,7 +899,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     
-    database = Database("db.sqlite")
+    database = Database.get_instance()
     cursor = database.get_cursor()
     groups = Group.get_all(cursor)
     

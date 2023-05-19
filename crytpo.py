@@ -72,8 +72,5 @@ class SecureString:
 ## main
 if __name__ == '__main__':
     password = SecureString('password')
-    print(str(password))
 
     password.wipe()
-
-    print(str(password))
