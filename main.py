@@ -1,3 +1,4 @@
+from typing import Union
 from appdirs import user_data_dir
 from markdown_it import MarkdownIt
 import pygments
@@ -7,9 +8,9 @@ import os.path, glob
 import sys, ctypes
 from crytpo import EncryptionWrapper, SecureString
 from db import Database, Conversation, Tag, Group, Metadata
-from PySide6.QtCore import Qt, QSortFilterProxyModel,QModelIndex, QPersistentModelIndex
-from PySide6.QtGui import QStandardItem, QStandardItemModel, QAction
-from PySide6.QtWidgets import QApplication, QSplitter, QTreeView, QTextEdit, QMainWindow, QToolBar, QWidget, QVBoxLayout, QFileDialog, QDialog, QDialogButtonBox, QTabWidget, QPushButton, QHBoxLayout, QListWidget, QListWidgetItem, QLineEdit, QMessageBox, QToolButton, QSizePolicy
+from PySide6.QtCore import Qt, QSortFilterProxyModel,QModelIndex, QPersistentModelIndex, QRect
+from PySide6.QtGui import QStandardItem, QStandardItemModel, QAction, QColor, QFont,QMouseEvent, QPen, QPainter
+from PySide6.QtWidgets import QApplication, QSplitter, QTreeView, QTextEdit, QMainWindow, QToolBar, QWidget, QVBoxLayout, QFileDialog, QDialog, QDialogButtonBox, QTabWidget, QPushButton, QHBoxLayout, QListWidget, QListWidgetItem, QLineEdit, QMessageBox, QToolButton, QSizePolicy, QInputDialog, QStyledItemDelegate,QStyle, QStyleOptionViewItem
 from group import GroupSelectionDialog, AddGroupDialog, ChangeGroupDialog
 from tag import ManageTagsDialog, AddTagsDialog
 
@@ -496,7 +497,7 @@ class MainWindow(QMainWindow):
 
         # Set the central widget and window properties
         self.setCentralWidget(central_widget)
-        self.setWindowTitle("Tree View Demo")
+        self.setWindowTitle("ChatGPT History")
         self.setGeometry(100, 100, 640, 480)
         self.setMinimumSize(600, 400)
 
@@ -811,6 +812,191 @@ def check_c_libraries():
         message_box.exec()
         sys.exit(1)
 
+class CustomDelegate(QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        item = index.data(Qt.DisplayRole)
+        text_lines = item.split('\n')
+
+        # if selected
+        if option.state & QStyle.State_Selected:
+            painter.fillRect(option.rect, QColor("lightblue"))
+            painter.setPen(option.palette.highlightedText().color())
+        
+        # if hovers
+        elif option.state & QStyle.State_MouseOver:
+            painter.fillRect(option.rect, option.palette.alternateBase())
+            painter.setPen(option.palette.highlightedText().color())
+            
+        # Draw the first line with default color
+        default_color = option.palette.text().color()
+        default_font = QFont()
+        default_font.setBold(True)
+        default_font.setPointSize(10)
+        painter.setFont(default_font)
+        painter.setPen(default_color)
+        painter.drawText(option.rect, Qt.TextSingleLine, text_lines[0])
+
+        # Draw the second line with a different color
+        second_line_rect = option.rect.translated(0, option.fontMetrics.height())
+        second_line_font = QFont()
+        second_line_font.setPointSize(8)
+        second_line_color = QColor("Gray")  # Change the color as desired
+        painter.setPen(second_line_color)
+        painter.setFont(second_line_font)
+        painter.drawText(second_line_rect, Qt.TextSingleLine, text_lines[1])
+
+    def sizeHint(self, option, index):
+        return super().sizeHint(option, index)
+    
+
+class DbListWidget(QListWidget):
+    def mousePressEvent(self, event: QMouseEvent) -> None:  
+        index = self.indexAt(event.position().toPoint())
+        if index.isValid():
+            self.setCurrentIndex(index)
+        super().mousePressEvent(event)      
+
+class DbManager(QDialog):
+    def __init__(self, data_dir):
+        super().__init__()
+        self.data_dir = data_dir
+        self.setWindowTitle("Database Manager")
+        self.setMinimumSize(300, 200)
+        self.layout = QVBoxLayout()
+        self.setLayout(self.layout)
+
+        delegate = CustomDelegate()
+
+        self.db_list = DbListWidget()
+        self.db_list.setItemDelegate(delegate)
+        self.db_list.setSelectionMode(QListWidget.SingleSelection)
+
+        button_row = QHBoxLayout()
+
+        button_new = QPushButton("New")
+        button_new.clicked.connect(self.new_db)
+        button_row.addWidget(button_new)
+
+        button_import = QPushButton("Import")
+        button_import.clicked.connect(self.import_db)
+        button_row.addWidget(button_import)
+
+        self.layout.addLayout(button_row)
+
+        self.layout.addWidget(self.db_list)
+
+        config_file = "config.ini"
+        config_path = os.path.join(data_dir, config_file)
+        config = configparser.ConfigParser()
+
+        config.read(config_path)
+
+        ## read section db_list, as a list of key value pairs
+        db_list = config.items("db_list")
+        for db in db_list:
+            # each item has two lines, first line is name, second line is path
+            item = QListWidgetItem(db[0]+"\n"+db[1])
+            item.setData(Qt.UserRole, db[1])
+            self.db_list.addItem(item)
+
+            
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        self.layout.addWidget(button_box)
+
+        if self.exec() == QDialog.Accepted:
+            self.selected_db = self.db_list.selectedItems()[0].data(Qt.UserRole)
+        else :
+            self.selected_db = None
+    
+    def import_db(self):
+        file_dialog = QFileDialog(self)
+        file_dialog.setNameFilter("Database files (*.chdb)")
+        file_dialog.setFileMode(QFileDialog.ExistingFile)
+
+        if file_dialog.exec():
+            file_name = file_dialog.selectedFiles()[0]
+            file_path = os.path.abspath(file_name)
+            file_name = os.path.basename(file_path)
+            
+            config_file = "config.ini"
+            config_path = os.path.join(self.data_dir, config_file)
+            config = configparser.ConfigParser()
+            config.read(config_path)
+            db_list = config.items("db_list")
+            for db in db_list:
+                if db[1] == file_path:
+                    message_box = QMessageBox()
+                    message_box.setText(f"Database {file_name} already exists.")
+                    message_box.exec()
+                    return
+            
+            db_name, ok = QInputDialog.getText(self, "Import Database", "Enter database name:")
+            if ok:
+                config["db_list"][db_name] = file_path
+                with open(config_path, "w") as f:
+                    config.write(f)
+                item = QListWidgetItem(db_name + "\n" + file_path)
+                item.setData(Qt.UserRole, file_path)
+                self.db_list.addItem(item)
+                self.db_list.setCurrentItem(item)
+                self.selected_db = file_path
+                return
+            
+
+    def new_db(self):
+        ## open file dialog, select folder to create new db
+        file_dialog = QFileDialog(self)
+        file_dialog.setFileMode(QFileDialog.FileMode.Directory)
+        if file_dialog.exec():
+            dir_path = file_dialog.selectedFiles()[0]
+            ## prompt for db name
+            db_name, ok = QInputDialog.getText(self, "New Database", "Enter database name:")
+            if ok:
+                db_path = os.path.join(dir_path, db_name + ".chdb")
+                db_path = os.path.abspath(db_path)
+                if os.path.exists(db_path):
+                    message_box = QMessageBox()
+                    message_box.setText(f"Database {db_name} already exists.")
+                    message_box.exec()
+                    return
+                Database.initialize(db_path)
+                database = Database.get_instance()
+                database.init()
+
+                create_password_dialog = PasswordDialog()
+                if create_password_dialog.password != None:
+                    password = create_password_dialog.password
+                    salt = EncryptionWrapper.generate_salt()
+                    key = EncryptionWrapper.generate_strong_key()
+                    encryption_wrapper = EncryptionWrapper(password, salt)
+                    encrypted_key = encryption_wrapper.encrypt(key)
+                    database = Database.get_instance()
+                    cursor = database.get_cursor()
+                    blob = Metadata(None, "blob", encrypted_key)
+                    Metadata.add(blob, cursor)
+                    salt = Metadata(None, "salt", salt)
+                    Metadata.add(salt, cursor)
+                    database.conn.commit()
+                else:
+                    sys.exit(0)
+
+                config_file = "config.ini"
+                config_path = os.path.join(self.data_dir, config_file)
+                config = configparser.ConfigParser()
+                config.read(config_path)
+                config["db_list"][db_name] = db_path
+                with open(config_path, "w") as f:
+                    config.write(f)
+                item = QListWidgetItem(db_name + "\n" + db_path)
+                item.setData(Qt.UserRole, db_path)
+                self.db_list.addItem(item)
+                self.db_list.setCurrentItem(item)
+                self.selected_db = db_path
+                return
+
+
 if __name__ == "__main__":
     secure_key = None
 
@@ -831,50 +1017,15 @@ if __name__ == "__main__":
     if not os.path.exists(config_path):
         config = configparser.ConfigParser()
         config["app"] = {"initialized": "False"}
+        config["db_list"] = {}
         with open(config_path, "w") as f:
             config.write(f)
 
-    config = configparser.ConfigParser()
-    config.read(config_path)
-
-    db_path = os.path.join(data_dir, "db.sqlite")
-    # Check if the app has been initialized
-    if config["app"]["initialized"] == "False":
-        # backup db.sqlite
-        if os.path.exists(db_path):
-            # list db.sqlite.bak* count
-            bak_files = glob.glob(os.path.join(data_dir, "db.sqlite.bak*"))
-            bak_count = len(bak_files)
-            if bak_count == 0:
-                os.rename(db_path, os.path.join(data_dir, "db.sqlite.bak"))
-            else:
-                bak_count += 1
-                os.rename(db_path, os.path.join(data_dir,f"db.sqlite.bak{bak_count}"))
-
-        Database.initialize(db_path)
-        database = Database.get_instance()
-        database.init()
-
-        create_password_dialog = PasswordDialog()
-        if create_password_dialog.password != None:
-            password = create_password_dialog.password
-            salt = EncryptionWrapper.generate_salt()
-            key = EncryptionWrapper.generate_strong_key()
-            encryption_wrapper = EncryptionWrapper(password, salt)
-            encrypted_key = encryption_wrapper.encrypt(key)
-            database = Database.get_instance()
-            cursor = database.get_cursor()
-            blob = Metadata(None, "blob", encrypted_key)
-            Metadata.add(blob, cursor)
-            salt = Metadata(None, "salt", salt)
-            Metadata.add(salt, cursor)
-            database.conn.commit()
-        else:
-            sys.exit(0)
-
-        config["app"]["initialized"] = "True"
-        with open(config_path, "w") as f:
-            config.write(f)
+    db_manager = DbManager(data_dir)
+    if db_manager.selected_db != None:
+        db_path = db_manager.selected_db
+    else:
+        sys.exit(0)
     
     input_password_dialog = InputPasswordDialog()
     if input_password_dialog.password != None:
@@ -897,7 +1048,6 @@ if __name__ == "__main__":
             sys.exit(0)
     else:
         sys.exit(0)
-
     
     database = Database.get_instance()
     cursor = database.get_cursor()
@@ -909,7 +1059,7 @@ if __name__ == "__main__":
         conversations = Conversation.get_by_group_id(group.id, cursor)
         data[f"{group.id}-{group.name}"] = [{"title": conversation.title, "id": conversation.id} for conversation in conversations]
 
-    header_labels = [""]
+    header_labels = ["Groups"]
     window = MainWindow(header_labels, data)
     window.show()
     app.exec()
