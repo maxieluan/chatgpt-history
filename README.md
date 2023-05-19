@@ -25,6 +25,7 @@ You don't want anyone to access your chatgpt history, after all, there are sensi
 ## Todo
 - [ ] Shortcut, like focusing into filter.
 - [ ] Shortcut, like scrolling with vim arrow keys.
+- [ ] searching through an open doc.
 - [ ] After filter, scroll list to the selected item.
 - [ ] Batch import
 - [ ] Import but don't have to manually select group every time. 
