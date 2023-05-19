@@ -15,13 +15,17 @@ You don't want anyone to access your chatgpt history, after all, there are sensi
 - [x] A place to enter your password.
 - [x] Filtering
 - [x] tags
+- [x] Nicer UI
+- [x] Nicer UX
+- [x] Better code structure.
+- [x] Rename
+- [x] Edit mode.
 
 ## Todo
-- [ ] Nicer UI
-- [ ] Even Nicer UX
-- [ ] Better code structure.
-- [ ] Rename
 - [ ] Abstract
+- [ ] Change Password
+- [ ] Change key
+- [ ] Export & import
 
 ## Limitation.
 It's encrypted, so, can't do global full text search. 

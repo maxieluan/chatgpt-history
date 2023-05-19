@@ -1,4 +1,3 @@
-from typing import Any, Union
 from markdown_it import MarkdownIt
 import pygments
 from pygments.formatters import HtmlFormatter
@@ -6,10 +5,12 @@ import configparser
 import os.path
 import sys, ctypes
 from crytpo import EncryptionWrapper, SecureString
-from db import Database, Conversation, Tag, Group, Action, Metadata
+from db import Database, Conversation, Tag, Group, Metadata
 from PySide6.QtCore import Qt, QSortFilterProxyModel,QModelIndex, QPersistentModelIndex
 from PySide6.QtGui import QStandardItem, QStandardItemModel, QAction
-from PySide6.QtWidgets import QApplication, QSplitter, QTreeView, QTextEdit, QMainWindow, QToolBar, QWidget, QVBoxLayout, QFileDialog, QDialog, QDialogButtonBox, QButtonGroup, QRadioButton, QScrollArea, QTabWidget, QPushButton, QHBoxLayout, QListWidget, QListWidgetItem, QLineEdit, QMessageBox, QToolButton, QMenu, QCheckBox
+from PySide6.QtWidgets import QApplication, QSplitter, QTreeView, QTextEdit, QMainWindow, QToolBar, QWidget, QVBoxLayout, QFileDialog, QDialog, QDialogButtonBox, QTabWidget, QPushButton, QHBoxLayout, QListWidget, QListWidgetItem, QLineEdit, QMessageBox, QToolButton, QSizePolicy
+from group import GroupSelectionDialog, AddGroupDialog, ChangeGroupDialog
+from tag import ManageTagsDialog, AddTagsDialog
 
 
 class TreeModel(QStandardItemModel):
@@ -33,7 +34,6 @@ class TreeModel(QStandardItemModel):
             group_name = "-".join(split[1:])
             group_item = QStandardItem(group_name)
             group_item.setData(group_id, Qt.UserRole)
-            print(type(group_item.data(Qt.UserRole)))
             parent_item.appendRow(group_item)
             for item_name in group_items:
                 child_item = QStandardItem(item_name["title"])
@@ -52,10 +52,33 @@ class TreeModel(QStandardItemModel):
                 for j in range(group_item.rowCount()):
                     conversation_item = group_item.child(j)
                     if conversation_item.data(Qt.UserRole) == conversation.id:
-                        tags = Tag.get_by_conversation_id(conversation.id, cursor)
-                        conversation_item.setData(tags, Qt.UserRole + 2)
+                        conversation_item.setData(conversation.tags, Qt.UserRole + 2)
                         break
                 break
+    
+    def group_changed(self, old_group_id, new_group_id, conversation):
+        for i in range(self.rowCount()):
+            group_item = self.item(i)
+            if int(group_item.data(Qt.UserRole)) == old_group_id:
+                # loop through conversations
+                for j in range(group_item.rowCount()):
+                    conversation_item = group_item.child(j)
+                    if conversation_item.data(Qt.UserRole) == conversation.id:
+                        # remove the conversation from the group
+                        group_item.removeRow(j)
+                break
+        # loop through tree items for group with id == new_group_id
+        for i in range(self.rowCount()):
+            group_item = self.item(i)
+            if int(group_item.data(Qt.UserRole)) == new_group_id:
+                # add the conversation to the group
+                child_item = QStandardItem(conversation.title)
+                child_item.setData(conversation.id, Qt.UserRole)
+                child_item.setData("con", Qt.UserRole + 1)
+                child_item.setData(conversation.tags, Qt.UserRole + 2)
+                group_item.appendRow(child_item)
+                break
+        
 
     def conversation_added(self, conversation):
         database = Database()
@@ -93,8 +116,6 @@ class FilterProxyModel(QSortFilterProxyModel):
         
         if role == Qt.UserRole or role == Qt.UserRole + 1:
             source_index = self.mapToSource(index)
-
-            print(source_index)
             return self.sourceModel().data(source_index, role)
 
         return super().data(index, role)
@@ -132,14 +153,16 @@ class FilterProxyModel(QSortFilterProxyModel):
 
 def handle_item_clicked(index):
     tree_model = window.proxy_model
+    print("here")
     item_type = tree_model.data(index, Qt.UserRole + 1)
     item_id = tree_model.data(index, Qt.UserRole)
-    print(item_type, item_id)
     if item_type == "con":
         conversation_id = item_id
         database = Database()
         cursor = database.get_cursor()
         conversation = Conversation.get_by_id(conversation_id, cursor)
+        tags = Tag.get_by_conversation_id(conversation_id, cursor)
+        conversation.tags = tags
         encryption_wrapper = EncryptionWrapper(str(secure_key), conversation.salt)
         decrypted_content = encryption_wrapper.decrypt(
             conversation.data)
@@ -153,6 +176,8 @@ def handle_item_clicked(index):
         window.update_active_conversation(conversation)
         html = md.render(decrypted_content)
         window.text_edit.setHtml(html)
+        window.text_edit.setReadOnly(True)
+        window.reset_edit()
         
 
 def create_toolbar(parent):
@@ -176,12 +201,14 @@ def show_delete_dialog():
     dialog = BatchDeleteDialog()
     dialog.exec()
     data = {}
+    database = Database()
+    cursor = database.get_cursor()
+    groups = Group.get_all(cursor)
     for group in groups:
         conversations = Conversation.get_by_group_id(group.id, cursor)
         data[f"{group.id}-{group.name}"] = [{"title": conversation.title, "id": conversation.id} for conversation in conversations]
     window.tree_model.update_data(data)
     window.refresh_tag_lists()
-    window.refresh_tags()
 
 def create_tree_view(parent):
     tree_view = QTreeView(parent)
@@ -195,138 +222,6 @@ def create_text_edit(parent):
     return text_edit
 
 
-class ManageTagsDialog(QDialog):
-    def __init__(self):
-        super().__init__()
-
-        self.setWindowTitle("Manage Tags")
-        self.setMinimumSize(300, 200)
-        
-        self.layout = QVBoxLayout()
-        self.top_widget = QWidget()
-        self.top_widget_layout = QHBoxLayout(self.top_widget)
-        self.layout.addWidget(self.top_widget)
-
-        ## two columns
-        ## left column: list of tags
-        ## right column: add, delete, edit buttons
-        self.setLayout(self.layout)
-
-        self.left_column = QWidget()
-        self.left_column_layout = QVBoxLayout(self.left_column)
-        self.left_column_layout.setContentsMargins(0, 0, 0, 0)
-        self.left_column_layout.setSpacing(0)
-        self.left_column.setStyleSheet("background-color: white;")
-        self.top_widget_layout.addWidget(self.left_column)
-
-        self.right_column = QWidget()
-        self.right_column_layout = QVBoxLayout(self.right_column)
-        self.right_column_layout.setContentsMargins(0, 0, 0, 0)
-        self.right_column_layout.setSpacing(0)
-        self.right_column.setStyleSheet("background-color: white;")
-        self.top_widget_layout.addWidget(self.right_column)
-        
-        self.tag_list = QListWidget()
-        self.tag_list.setSelectionMode(QListWidget.MultiSelection)
-
-        database = Database()
-        cursor = database.get_cursor()
-        tags = Tag.get_all(cursor)
-        for tag in tags:
-            item = QListWidgetItem(tag.name)
-            item.setData(Qt.UserRole, tag.id)
-            self.tag_list.addItem(item)
-
-        self.left_column_layout.addWidget(self.tag_list)
-
-        self.button_add = QPushButton("Add")
-        self.button_add.clicked.connect(self.add_tag)
-        self.right_column_layout.addWidget(self.button_add)
-
-        self.button_delete = QPushButton("Delete")
-        self.button_delete.clicked.connect(self.delete_tag)
-        self.right_column_layout.addWidget(self.button_delete)
-
-        self.button_edit = QPushButton("Edit")
-        self.button_edit.clicked.connect(self.edit_tag)
-        self.right_column_layout.addWidget(self.button_edit)
-
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        self.layout.addWidget(button_box)
-
-    def add_tag(self):
-        dialog = AddTagDialog()
-        if dialog.tag != None:
-            database = Database()
-            cursor = database.get_cursor()
-            tag = Tag(None, dialog.tag)
-            tag_id = Tag.add(tag, cursor)
-            tag.id = tag_id
-            database.conn.commit()
-
-            item = QListWidgetItem(tag.name)
-            item.setData(Qt.UserRole, tag.id)
-            self.tag_list.addItem(item)
-    
-    def delete_tag(self):
-        for item in self.tag_list.selectedItems():
-            tag_id = item.data(Qt.UserRole)
-            database = Database()
-            cursor = database.get_cursor()
-
-            conversations = Conversation.get_by_tag_id(tag_id, cursor)
-            for conversation in conversations:
-                Conversation.remove_tag(conversation.id, tag_id, cursor)
-
-            Tag.delete(tag_id, cursor)
-            database.conn.commit()
-            self.tag_list.takeItem(self.tag_list.row(item))
-
-    def edit_tag(self):
-        if len(self.tag_list.selectedItems()) == 0:
-            return
-        item = self.tag_list.selectedItems()[0]
-        tag_id = item.data(Qt.UserRole)
-        database = Database()
-        cursor = database.get_cursor()
-        tag = Tag.get_by_id(tag_id, cursor)
-        dialog = AddTagDialog(False)
-        if dialog.tag != None:
-            tag.name = dialog.tag
-            Tag.update(tag, cursor)
-            database.conn.commit()
-            item.setText(tag.name)
-
-class AddTagDialog(QDialog):
-    def __init__(self, add=True):
-        super().__init__()
-        if add:
-            self.setWindowTitle("Add Tag")
-        else:
-            self.setWindowTitle("Edit Tag")
-        self.setMinimumSize(300, 200)
-        self.layout = QVBoxLayout()
-        self.setLayout(self.layout)
-
-        self.tag_name_input = QLineEdit()
-        self.tag_name_input.setPlaceholderText("Tag Name")
-        self.layout.addWidget(self.tag_name_input)
-
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        self.layout.addWidget(button_box)
-
-        if self.exec() == QDialog.Accepted:
-            self.tag = self.tag_name_input.text()
-        else :
-            self.tag = None
-
-    def deleteLater(self) -> None:
-        return super().deleteLater()
-
 class BatchDeleteDialog(QDialog):
     def __init__(self):
         super().__init__()
@@ -336,6 +231,12 @@ class BatchDeleteDialog(QDialog):
         self.setMinimumSize(300, 200)
         self.layout = QVBoxLayout()
         self.tab_widget = QTabWidget()
+        
+        self.filter_input = QLineEdit()
+        self.filter_input.setPlaceholderText("Filter")
+        self.filter_input.textChanged.connect(self.filter_changed)
+        self.layout.addWidget(self.filter_input)
+
         self.tab_widget.addTab(self.create_group_tab(), "Groups")
         self.tab_widget.addTab(self.create_conversation_tab(), "Conversations")
         self.tab_widget.addTab(self.create_tag_tab(), "Tags")
@@ -354,6 +255,30 @@ class BatchDeleteDialog(QDialog):
 
         self.setLayout(self.layout)
         self.adjustSize()
+
+    def filter_changed(self):
+        filter_text = self.filter_input.text()
+        if self.current_tab == "group":
+            for i in range(self.group_list.count()):
+                item = self.group_list.item(i)
+                if filter_text.lower() in item.text().lower():
+                    item.setHidden(False)
+                else:
+                    item.setHidden(True)
+        elif self.current_tab == "conversation":
+            for i in range(self.conversation_list.count()):
+                item = self.conversation_list.item(i)
+                if filter_text.lower() in item.text().lower():
+                    item.setHidden(False)
+                else:
+                    item.setHidden(True)
+        elif self.current_tab == "tag":
+            for i in range(self.tag_list.count()):
+                item = self.tag_list.item(i)
+                if filter_text.lower() in item.text().lower():
+                    item.setHidden(False)
+                else:
+                    item.setHidden(True)
     
     def create_group_tab(self):
         container_widget = QWidget()
@@ -427,6 +352,8 @@ class BatchDeleteDialog(QDialog):
             self.current_tab = "conversation"
         elif index == 2:
             self.current_tab = "tag"
+        
+        self.filter_changed()
 
     def update_delete_button(self):
         num_of_selected_items = 0
@@ -476,73 +403,6 @@ class BatchDeleteDialog(QDialog):
                 database.conn.commit()
                 self.tag_list.takeItem(self.tag_list.row(item))
 
-class GroupSelectionDialog(QDialog):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Select Group")
-        self.setMinimumSize(300, 200)
-        self.layout = QVBoxLayout()
-        self.setLayout(self.layout)
-
-        scrollarea = QScrollArea()
-        scrollarea.setWidgetResizable(True)
-        scrollarea.setMinimumWidth(300)
-
-        container_widget = QWidget()
-        container_layout = QVBoxLayout(container_widget)
-        container_widget.setStyleSheet("background-color: white;")
-
-        self.group_button_group = QButtonGroup()
-
-        database = Database()
-        cursor = database.get_cursor()
-        groups = Group.get_all(cursor)
-        for group in groups:
-            radio_button = QRadioButton(group.name)
-            self.group_button_group.addButton(radio_button, group.id)
-            container_layout.addWidget(radio_button)
-
-        scrollarea.setWidget(container_widget)
-        self.layout.addWidget(scrollarea)
-        
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        self.layout.addWidget(button_box)
-
-        if self.exec() == QDialog.Accepted:
-            self.selected_group_id = self.group_button_group.checkedId()
-        else :
-            self.selected_group_id = None
-
-    def deleteLater(self) -> None:
-        return super().deleteLater()
-
-class AddGroupDialog(QDialog):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Add Group")
-        self.setMinimumSize(300, 200)
-        self.layout = QVBoxLayout()
-        self.setLayout(self.layout)
-
-        self.group_name_input = QLineEdit()
-        self.group_name_input.setPlaceholderText("Group Name")
-        self.layout.addWidget(self.group_name_input)
-
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        self.layout.addWidget(button_box)
-
-        if self.exec() == QDialog.Accepted:
-            self.group = self.group_name_input.text()
-        else :
-            self.group = None
-
-    def deleteLater(self) -> None:
-        return super().deleteLater()
-
 class MainWindow(QMainWindow):
     def __init__(self, header_labels, data):
         super().__init__()
@@ -583,6 +443,9 @@ class MainWindow(QMainWindow):
         clear_tag_selection_action = QAction("Clear Tag", self)
         clear_tag_selection_action.triggered.connect(self.clear_tag_selection)
 
+        refresh_action = QAction("Refresh", self)
+        refresh_action.triggered.connect(self.refresh_data)
+
         toggle_expand_action = QAction("Expand", self)
         toggle_expand_action.triggered.connect(self.tree_view.expandAll)
 
@@ -591,6 +454,7 @@ class MainWindow(QMainWindow):
 
         toolbar.addAction(add_group_action)
         toolbar.addAction(clear_tag_selection_action)
+        toolbar.addAction(refresh_action)
         toolbar.addAction(toggle_expand_action)
         toolbar.addAction(toggle_collapse_action)
         self.leftcolumn.addWidget(toolbar)
@@ -615,7 +479,11 @@ class MainWindow(QMainWindow):
 
         # Set the model on the tree view
         self.tree_view.setModel(self.proxy_model)
+        
+        # handle when items displayed is editted
+        self.tree_view.entered.connect(self.tree_view_editted)
         self.tree_view.clicked.connect(handle_item_clicked)
+        self.tree_model.dataChanged.connect(self.tree_view_editted)
 
         filter_input.textChanged.connect(self.proxy_model.setFilter)
 
@@ -634,9 +502,38 @@ class MainWindow(QMainWindow):
         self.setGeometry(100, 100, 640, 480)
         self.setMinimumSize(600, 400)
 
+    def tree_view_editted(self):
+        item = self.tree_view.currentIndex()
+        if item.isValid():
+            item_type = self.proxy_model.data(item, Qt.UserRole + 1)
+            item_id = self.proxy_model.data(item, Qt.UserRole)
+            if item_type == "con":
+                database = Database()
+                cursor = database.get_cursor()
+                title = self.proxy_model.data(item, Qt.DisplayRole)
+                Conversation.update_title(item_id, title, cursor)
+                database.conn.commit()
+            else:
+                database = Database()
+                cursor = database.get_cursor()
+                title = self.proxy_model.data(item, Qt.DisplayRole)
+                group = Group(item_id, title)
+                Group.update(group, cursor)
+                database.conn.commit()
+
+        
+    def refresh_data(self):
+        database = Database()
+        cursor = database.get_cursor()
+        data = {}
+        groups = Group.get_all(cursor)
+        for group in groups:
+            conversations = Conversation.get_by_group_id(group.id, cursor)
+            data[f"{group.id}-{group.name}"] = [{"title": conversation.title, "id": conversation.id} for conversation in conversations]
+        self.tree_model.update_data(data)
+
     def update_active_conversation(self, conversation):
         self.active_conversation = conversation
-        window.refresh_tags()
 
     def clear_tag_selection(self):
         self.tag_list.clearSelection()
@@ -647,39 +544,96 @@ class MainWindow(QMainWindow):
         self.toolbar_textedit = QToolBar(self)
         self.toolbar_textedit.setMinimumHeight(10)
         self.toolbar_textedit.setStyleSheet("background-color: white; border: 1px solid black; border-top: 0px")
-        button = QToolButton()
-        button.setText("Tags  ")
-        self.toolbar_textedit.addWidget(button)
-
-        # Create the menu
-        self.menu = QMenu(button)
-        self.menu.setStyleSheet(
-                """
-                QMenu {
-                    background-color: white;
-                    color: black;
-                }
-                QMenu::item:selected {
-                    background-color: lightgray;
-                    color: black;
-                }
-                """
-            )
-
-        self.refresh_tags()
-
-        # Set the menu on the tool button
-        button.setMenu(self.menu)
-        button.setPopupMode(QToolButton.MenuButtonPopup)
+        
+        add_tags_button = QToolButton()
+        add_tags_button.setText("Add Tags")
+        add_tags_button.clicked.connect(self.add_tags)
+        self.toolbar_textedit.addWidget(add_tags_button)
 
         button_manage_tags = QToolButton()
         button_manage_tags.setText("Manage Tags")
         button_manage_tags.clicked.connect(self.show_manage_tags_dialog)
         self.toolbar_textedit.addWidget(button_manage_tags)
 
+        button_change_group = QToolButton()
+        button_change_group.setText("Change Group")
+        button_change_group.clicked.connect(self.change_group)
+        self.toolbar_textedit.addWidget(button_change_group)
+
+        spacer_widget = QWidget()
+        spacer_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.toolbar_textedit.addWidget(spacer_widget)
+
+        self.save_button = QToolButton()
+        self.save_button.setText("Save")
+        self.save_button.clicked.connect(self.save)
+        self.toolbar_textedit.addWidget(self.save_button)
+        self.save_button.setDisabled(True)
+
+        self.toggle_edit_button = QToolButton()
+        self.toggle_edit_button.setText("Edit")
+        self.toggle_edit_button.setCheckable(True)
+        self.toggle_edit_button.clicked.connect(self.toggle_edit)
+        self.toolbar_textedit.addWidget(self.toggle_edit_button)
+
         return self.toolbar_textedit
     
+    def save(self):
+        if self.active_conversation == None:
+            return
+        database = Database()
+        cursor = database.get_cursor()
+        encryption_wrapper = EncryptionWrapper(str(secure_key), self.active_conversation.salt)
+        encrypted_content = encryption_wrapper.encrypt(self.text_edit.toPlainText())
+        self.active_conversation.data = encrypted_content
+        Conversation.update_data(self.active_conversation.id, encrypted_content, cursor)
+        database.conn.commit()
+        self.save_button.setDisabled(True)
+        self.reset_edit()
+    
+    def reset_edit(self):
+        self.toggle_edit_button.setChecked(False)
+        self.toggle_edit()
+
+    def toggle_edit(self):
+        if self.active_conversation == None:
+            return
+        if self.toggle_edit_button.isChecked():
+            self.save_button.setDisabled(False)
+            encryption_wrapper = EncryptionWrapper(str(secure_key), self.active_conversation.salt)
+            decrypted_content = encryption_wrapper.decrypt(
+                self.active_conversation.data)
+            self.text_edit.setText(decrypted_content)
+            self.text_edit.setReadOnly(False)
+        else:
+            self.save_button.setDisabled(True)
+            encryption_wrapper = EncryptionWrapper(str(secure_key), self.active_conversation.salt)
+            decrypted_content = encryption_wrapper.decrypt(
+                self.active_conversation.data)
+            md = MarkdownIt()
+            formatter = HtmlFormatter(stylex="colorful")
+            md.renderer.rules['code'] = lambda tokens, idx, options, env, slf: \
+                '<div class="code-container">' \
+                '<pre class="highlight"><code>' + pygments.highlight(tokens[idx]['content'], md.lexer, formatter) + '</code></pre><button class="copy-button" onclick="copyCode(this)">Copy</button></div>'
+
+            html = md.render(decrypted_content)
+            self.text_edit.setHtml(html)
+            self.text_edit.setReadOnly(True)
+
+
+    def add_tags(self):
+        if self.active_conversation == None:
+            return
+        dialog = AddTagsDialog(self)
+        dialog.exec()
+        self.refresh_tag_lists()
         
+    
+    def change_group(self):
+        dialog = ChangeGroupDialog(self)
+        dialog.exec()
+
+    
     def show_manage_tags_dialog(self):
         dialog = ManageTagsDialog()
         dialog.exec()
@@ -701,44 +655,10 @@ class MainWindow(QMainWindow):
             self.proxy_model.tag_id = None
             self.proxy_model.invalidateFilter()
             return
-        print(self.tag_list.selectedItems())
         item = self.tag_list.selectedItems()[0]
         tag_id = item.data(Qt.UserRole)
         self.proxy_model.tag_id = tag_id
         self.proxy_model.invalidateFilter()
-        
-    
-    def refresh_tags(self):
-        menu = self.menu
-        menu.clear()
-        database = Database()
-        cursor = database.get_cursor()
-        tags = Tag.get_all(cursor)    
-
-        print(self.active_conversation)
-        
-        if self.active_conversation != None:
-            tags_of_conversation = Tag.get_by_conversation_id(self.active_conversation.id, cursor)
-
-        for tag in tags:
-            action = menu.addAction(tag.name)
-            action.setData(tag.id)
-
-            if self.active_conversation != None:
-                action.setCheckable(True)
-            else:
-                action.setCheckable(False)
-
-            if self.active_conversation != None:
-                for tag_of_conversation in tags_of_conversation:
-                    if tag_of_conversation.id == tag.id:
-                        action.setChecked(True)
-                        break
-            
-            action.triggered.connect(lambda checked = None, action = action: self.handle_tag_selected(action))
-            menu.addAction(action)
-        
-        print(menu.actions())
     
     def handle_tag_selected(self, action):
         if self.active_conversation == None:
@@ -759,6 +679,8 @@ class MainWindow(QMainWindow):
             
             Conversation.remove_tag(self.active_conversation.id, tag_id, cursor)
             database.conn.commit()
+        tags = Tag.get_by_conversation_id(self.active_conversation.id, cursor)
+        self.active_conversation.tags = tags
         self.tree_model.tag_changed(self.active_conversation)
         self.refresh_tag_lists()
 
@@ -829,6 +751,7 @@ class MainWindow(QMainWindow):
 
                     html = md.render(decrypted_content)
                     self.text_edit.setHtml(html)                   
+                    self.text_edit.setReadOnly(True)
 
 class PasswordDialog(QDialog):
     def __init__(self):
@@ -852,7 +775,7 @@ class PasswordDialog(QDialog):
             self.password = self.password_input.text()
         else :
             self.password = None
-
+        
 class InputPasswordDialog(QDialog):
     def __init__(self):
         super().__init__()

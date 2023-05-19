@@ -153,12 +153,26 @@ class Conversation:
     @classmethod
     def save(cls, conversation, cursor):
         cursor.execute("INSERT INTO conversations (title, group_id, data, abstract, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)", (conversation.title, conversation.group_id, conversation.data, conversation.abstract, conversation.salt))
-        
+    
+    @classmethod
+    def change_group(cls, conversation_id, group_id, cursor):
+        cursor.execute("UPDATE conversations SET group_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (group_id, conversation_id))
 
     @classmethod
     def update(cls, conversation, cursor):
         cursor.execute("UPDATE conversations SET title=?, group_id=?, data=?, abstract=?, salt=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (conversation.title, conversation.group_id, conversation.data, conversation.abstract, conversation.salt, conversation.id))
-        
+    
+    @classmethod
+    def update_title(cls, conversation_id, title, cursor):
+        cursor.execute("UPDATE conversations SET title=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (title, conversation_id))
+
+    @classmethod
+    def update_abstract(cls, conversation_id, abstract, cursor):
+        cursor.execute("UPDATE conversations SET abstract=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (abstract, conversation_id))
+
+    @classmethod
+    def update_data(cls, conversation_id, data, cursor):
+        cursor.execute("UPDATE conversations SET data=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (data, conversation_id))
     
     @classmethod
     def delete(cls, id, cursor):
@@ -168,7 +182,13 @@ class Conversation:
     @classmethod
     def add_tag(cls, conversation_id, tag_id, cursor):
         cursor.execute("INSERT INTO conversation_tag (conversation_id, tag_id) VALUES (?, ?)", (conversation_id, tag_id))
-        
+
+    # tag_ids is a list of tag ids
+    @classmethod
+    def change_tag(cls, conversation_id, tag_ids, cursor):
+        cursor.execute("DELETE FROM conversation_tag WHERE conversation_id=?", (conversation_id,))
+        for tag_id in tag_ids:
+            cursor.execute("INSERT INTO conversation_tag (conversation_id, tag_id) VALUES (?, ?)", (conversation_id, tag_id))
 
     @classmethod
     def remove_tag(cls, conversation_id, tag_id, cursor):
