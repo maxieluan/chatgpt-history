@@ -9,7 +9,7 @@ import sys, ctypes
 from crytpo import EncryptionWrapper, SecureString
 from db import Database, Conversation, Tag, Group, Metadata
 from PySide6.QtCore import Qt, QSortFilterProxyModel,QModelIndex, QPersistentModelIndex
-from PySide6.QtGui import QStandardItem, QStandardItemModel, QAction, QColor, QFont,QMouseEvent, QShortcut, QTextCursor, QTextDocument
+from PySide6.QtGui import QStandardItem, QStandardItemModel, QAction, QColor, QFont,QMouseEvent, QShortcut, QTextCursor, QTextDocument, QPalette
 from PySide6.QtWidgets import QApplication, QSplitter, QTreeView, QTextEdit, QMainWindow, QToolBar, QWidget, QVBoxLayout, QFileDialog, QDialog, QDialogButtonBox, QTabWidget, QPushButton, QHBoxLayout, QListWidget, QListWidgetItem, QLineEdit, QMessageBox, QToolButton, QSizePolicy, QInputDialog, QStyledItemDelegate,QStyle
 from group import GroupSelectionDialog, AddGroupDialog, ChangeGroupDialog
 from tag import ManageTagsDialog, AddTagsDialog
@@ -43,7 +43,7 @@ class TreeModel(QStandardItemModel):
                 child_item.setData("con", Qt.UserRole + 1)
                 if item_name["id"] in tags_by_c:
                     child_item.setData(tags_by_c[item_name["id"]], Qt.UserRole + 2)
-                    print(tags_by_c[item_name["id"]])
+                    
                 group_item.appendRow(child_item)
     
     def tag_changed(self, conversation):
@@ -56,7 +56,7 @@ class TreeModel(QStandardItemModel):
                     conversation_item = group_item.child(j)
                     if conversation_item.data(Qt.UserRole) == conversation.id:
                         tag_ids = [tag.id for tag in conversation.tags]
-                        print(tag_ids)
+       
                         conversation_item.setData(tag_ids, Qt.UserRole + 2)
                         break
                 break
@@ -128,6 +128,7 @@ class FilterProxyModel(QSortFilterProxyModel):
     def setFilter(self, filter: str) -> None:
         self.filter = filter
         self.invalidateFilter()
+        window.tree_view.expandAll()
     
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex | QPersistentModelIndex) -> bool:
         source_model = self.sourceModel()
@@ -415,6 +416,13 @@ class MainWindow(QMainWindow):
         # Create the widgets
         self.tree_view = create_tree_view(self)
         self.text_edit = create_text_edit(self)
+        pallette = self.text_edit.palette()
+        pallette.setBrush(QPalette.Base, Qt.white)
+        pallette.setBrush(QPalette.Text, Qt.black)
+        pallette.setBrush(QPalette.Highlight, Qt.yellow)
+        pallette.setBrush(QPalette.HighlightedText, Qt.black)
+        self.text_edit.setPalette(pallette)
+
         self.toolbar = create_toolbar(self)
 
         self.find_input = QLineEdit()
@@ -550,18 +558,18 @@ class MainWindow(QMainWindow):
         # find the text, move the cursor to the next occurence
         # highlight the text in blue rect
         text = self.find_input.text()
-        if text == "":
-            return
         cursor = self.text_edit.textCursor()
         cursor.movePosition(QTextCursor.Start)
-        cursor = self.text_edit.document().find(text, cursor)
-        if not cursor.isNull():
-            self.text_edit.setTextCursor(cursor)
-            self.text_edit.ensureCursorVisible()
-            self.text_edit.find(text)
-        else:
-            self.text_edit.moveCursor(QTextCursor.End)
-            self.text_edit.find(text)
+        selections = []
+        while cursor.position() < self.text_edit.document().characterCount():
+            cursor = self.text_edit.document().find(text, cursor)
+            if cursor.isNull():
+                break
+            selection = QTextEdit.ExtraSelection()
+            selection.format.setBackground(QColor("yellow"))
+            selection.cursor = cursor
+            selections.append(selection)
+        self.text_edit.setExtraSelections(selections)
 
 
     def find_next(self):
@@ -728,6 +736,7 @@ class MainWindow(QMainWindow):
         tag_id = item.data(Qt.UserRole)
         self.proxy_model.tag_id = tag_id
         self.proxy_model.invalidateFilter()
+        window.tree_view.expandAll()
     
     def handle_tag_selected(self, action):
         if self.active_conversation == None:
