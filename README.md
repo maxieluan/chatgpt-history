@@ -20,14 +20,22 @@ You don't want anyone to access your chatgpt history, after all, there are sensi
 - [x] Better code structure.
 - [x] Rename
 - [x] Edit mode.
+- [x] Can specify db location, can create, import or whatever.  
 
 ## Todo
+- [ ] Shortcut, like focusing into filter.
+- [ ] Shortcut, like scrolling with vim arrow keys.
+- [ ] searching through an open doc.
+- [ ] After filter, scroll list to the selected item.
+- [ ] Batch import
+- [ ] Import but don't have to manually select group every time. 
+- [ ] Dark Theme
+- [ ] Font/Font Size
 - [ ] Abstract
 - [ ] Change Password
 - [ ] Change key
 - [ ] Export & import
-- [ ] Theme
-- [ ] Font/Font Size
+- [ ] Screen reader.
 
 ## Limitation.
 It's encrypted, so, can't do global full text search. 
