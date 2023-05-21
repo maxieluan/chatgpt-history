@@ -8,9 +8,9 @@ import os.path, glob
 import sys, ctypes
 from crytpo import EncryptionWrapper, SecureString
 from db import Database, Conversation, Tag, Group, Metadata
-from PySide6.QtCore import Qt, QSortFilterProxyModel,QModelIndex, QPersistentModelIndex, QRect
-from PySide6.QtGui import QStandardItem, QStandardItemModel, QAction, QColor, QFont,QMouseEvent, QPen, QPainter
-from PySide6.QtWidgets import QApplication, QSplitter, QTreeView, QTextEdit, QMainWindow, QToolBar, QWidget, QVBoxLayout, QFileDialog, QDialog, QDialogButtonBox, QTabWidget, QPushButton, QHBoxLayout, QListWidget, QListWidgetItem, QLineEdit, QMessageBox, QToolButton, QSizePolicy, QInputDialog, QStyledItemDelegate,QStyle, QStyleOptionViewItem
+from PySide6.QtCore import Qt, QSortFilterProxyModel,QModelIndex, QPersistentModelIndex
+from PySide6.QtGui import QStandardItem, QStandardItemModel, QAction, QColor, QFont,QMouseEvent, QShortcut, QTextCursor, QTextDocument
+from PySide6.QtWidgets import QApplication, QSplitter, QTreeView, QTextEdit, QMainWindow, QToolBar, QWidget, QVBoxLayout, QFileDialog, QDialog, QDialogButtonBox, QTabWidget, QPushButton, QHBoxLayout, QListWidget, QListWidgetItem, QLineEdit, QMessageBox, QToolButton, QSizePolicy, QInputDialog, QStyledItemDelegate,QStyle
 from group import GroupSelectionDialog, AddGroupDialog, ChangeGroupDialog
 from tag import ManageTagsDialog, AddTagsDialog
 
@@ -43,6 +43,7 @@ class TreeModel(QStandardItemModel):
                 child_item.setData("con", Qt.UserRole + 1)
                 if item_name["id"] in tags_by_c:
                     child_item.setData(tags_by_c[item_name["id"]], Qt.UserRole + 2)
+                    print(tags_by_c[item_name["id"]])
                 group_item.appendRow(child_item)
     
     def tag_changed(self, conversation):
@@ -54,7 +55,9 @@ class TreeModel(QStandardItemModel):
                 for j in range(group_item.rowCount()):
                     conversation_item = group_item.child(j)
                     if conversation_item.data(Qt.UserRole) == conversation.id:
-                        conversation_item.setData([tag.id for tag in conversation.tags], Qt.UserRole + 2)
+                        tag_ids = [tag.id for tag in conversation.tags]
+                        print(tag_ids)
+                        conversation_item.setData(tag_ids, Qt.UserRole + 2)
                         break
                 break
     
@@ -134,6 +137,8 @@ class FilterProxyModel(QSortFilterProxyModel):
         if self.tag_id != None:
             if source_model.data(source_index, Qt.UserRole + 1) == "con":
                 tags = source_model.data(source_index, Qt.UserRole + 2)
+                if tags == None:
+                    return False
                 if self.tag_id not in tags:
                     return False
         
@@ -412,6 +417,30 @@ class MainWindow(QMainWindow):
         self.text_edit = create_text_edit(self)
         self.toolbar = create_toolbar(self)
 
+        self.find_input = QLineEdit()
+        self.find_input.setPlaceholderText("Find")
+        self.find_input.setStyleSheet("background-color: white; border: 1px solid black; border-radius: 5px;")
+        self.find_input.setMinimumWidth(200)
+        self.find_input.setMaximumWidth(200)
+        self.find_input.textChanged.connect(self.find_text)
+        self.find_input.returnPressed.connect(self.find_next)
+
+
+        # ctrl + return on find_input to find previous
+        self.find_input.find_previous = QShortcut("Ctrl+Return", self.find_input)
+        self.find_input.find_previous.activated.connect(self.find_previous)
+        
+        self.find_input.setClearButtonEnabled(True)
+        self.find_input.setFocus()
+        
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.toolbar.addWidget(spacer)
+        self.toolbar.addWidget(self.find_input)
+
+        self.find_shortcut = QShortcut("Ctrl+F", self)
+        self.find_shortcut.activated.connect(self.find_input.setFocus)
+
         self.left_widget = QWidget()
         self.leftcolumn = QVBoxLayout(self.left_widget)
         self.leftcolumn.setContentsMargins(0, 0, 0, 0)
@@ -423,6 +452,14 @@ class MainWindow(QMainWindow):
 
         filter_input = QLineEdit()
         filter_input.setPlaceholderText("Filter")
+
+        self.filter_shortcut = QShortcut("Ctrl+L", self)
+        self.filter_shortcut.activated.connect(filter_input.setFocus)
+
+        # esc to exit filter and find_input
+        self.filter_shortcut = QShortcut("Esc", self)
+        self.filter_shortcut.activated.connect(self.find_input.clearFocus)
+        self.filter_shortcut.activated.connect(filter_input.clearFocus)
 
         self.leftcolumn.addWidget(filter_input)
 
@@ -500,6 +537,40 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("ChatGPT History")
         self.setGeometry(100, 100, 640, 480)
         self.setMinimumSize(600, 400)
+       
+
+    def find_previous(self):
+        # find the previous occurence of the text
+        text = self.find_input.text()
+        if text == "":
+            return
+        self.text_edit.find(text, QTextDocument.FindBackward)
+    
+    def find_text(self):
+        # find the text, move the cursor to the next occurence
+        # highlight the text in blue rect
+        text = self.find_input.text()
+        if text == "":
+            return
+        cursor = self.text_edit.textCursor()
+        cursor.movePosition(QTextCursor.Start)
+        cursor = self.text_edit.document().find(text, cursor)
+        if not cursor.isNull():
+            self.text_edit.setTextCursor(cursor)
+            self.text_edit.ensureCursorVisible()
+            self.text_edit.find(text)
+        else:
+            self.text_edit.moveCursor(QTextCursor.End)
+            self.text_edit.find(text)
+
+
+    def find_next(self):
+        # find the next occurence of the text
+        text = self.find_input.text()
+        if text == "":
+            return
+        self.text_edit.find(text)
+       
 
     def tree_view_editted(self):
         item = self.tree_view.currentIndex()
@@ -906,7 +977,10 @@ class DbManager(QDialog):
         self.layout.addWidget(button_box)
 
         if self.exec() == QDialog.Accepted:
-            self.selected_db = self.db_list.selectedItems()[0].data(Qt.UserRole)
+            if self.db_list.selectedItems():
+                self.selected_db = self.db_list.selectedItems()[0].data(Qt.UserRole)
+            else:
+                self.selected_db = db_list[0][1]
         else :
             self.selected_db = None
     
