@@ -1,3 +1,8 @@
+# Reason for discontinuing
+1. It's ugly and poorly designed; even I don't want to use it.
+2. Its code structure is very bad; I feel reluctant to work on it.
+3. I find an alternative freeware, which can do basically everything this thing can do, but better. I will create another software, polish it, and won't release it until it's better than the alternative I use now. 
+
 # chatgpt-history
 
 A offline GUI to view your chatgpt history.
